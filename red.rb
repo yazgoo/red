@@ -1,3 +1,4 @@
+#!/usr/bin/env ruby
 require 'curses'
 class Historized
   attr_reader :actions, :dirty
