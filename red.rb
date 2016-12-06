@@ -1,14 +1,14 @@
 #!/usr/bin/env ruby
 require 'curses'
 class Historized
-  attr_reader :actions, :dirty
+  attr_reader :actions, :dirty, :what
   def initialize what
     @actions = []
     @what = what
     @dirty = false
   end
   def method_missing(m, *args, &block)  
-    @what.send m, *args
+    @what.send m, *args, &block
   end  
   def delete_at i
     @actions << {name: :delete_at, index: i, line: @what[i]}
@@ -16,6 +16,7 @@ class Historized
     @dirty = true
   end
   def insert_line line
+    @actions << {name: :add_line, index: line + 1, line: ""}
     @what = @what[0..line] + [""] + @what[line+1..@what.size-1]
   end
   def paste_at i
@@ -28,7 +29,12 @@ class Historized
   def undo
     action = @actions.pop
     return if action.nil?
-    @what.insert(action[:index], action[:line])
+    case action[:name]
+    when :add_line
+      @what.delete_at(action[:index])
+    else
+      @what.insert(action[:index], action[:line])
+    end
   end
 end
 class Buffer
@@ -98,12 +104,14 @@ class Buffer
   end
   def insert c
     old = @contents[@cursor[0]]
-    @contents[@cursor[0]] = old[0..@cursor[1]-1] + c + old[@cursor[1]..old.size-1]
+    prefix = @cursor[1] >= 1 ? old[0..@cursor[1]-1] : ""
+    @contents[@cursor[0]] = prefix + c + old[@cursor[1]..old.size-1] if c.is_a? String
     right
   end
   def remove_previous
     old = @contents[@cursor[0]]
-    @contents[@cursor[0]] = old[0..@cursor[1]-2] + old[@cursor[1]..old.size-1]
+    prefix = @cursor[1] >= 2 ? old[0..@cursor[1]-2] : ""
+    @contents[@cursor[0]] = prefix + old[@cursor[1]..old.size-1]
     left
   end
   def command c
@@ -111,7 +119,13 @@ class Buffer
       File.write @path, @contents.join("\n")
       "written"
     else
-      "#{c}: unknown command"
+      spl = c.match  /%s,(.+),(.+),g/
+      if spl
+        @contents.map! { |x| x.gsub(spl[1], spl[2]) }
+        "done"
+      else
+        "#{c}: unknown command"
+      end
     end
   end
   def new_line
@@ -155,28 +169,39 @@ class Editor
       @buffers << Buffer.new(ntab[1], @dimension)
       @i = @buffers.size - 1
       "ok"
-    elsif c == "q"
-      @buffers.delete_at @i
-      exit if @buffers.size == 0
-      @i = 0 if @i >= @buffers.size
-      "ok"
-    elsif c == "qa"
-      exit
+    else
+      if c == "q"
+        @buffers.delete_at @i
+        exit if @buffers.size == 0
+        @i = 0 if @i >= @buffers.size
+        "ok"
+      elsif c == "qa"
+        exit
+      end
     end
   end
   def insert
     @result = ""
     case @c
     when 9 # tab
-      4.times { @buffer.insert " " }
+      2.times { @buffer.insert " " }
     when 10 # enter
       @buffer.new_line
     when 27
-      mode = :view
+      @mode = :view
     when 127 #backspace
       @buffer.remove_previous
     else 
-      @buffer.insert c
+      @buffer.insert @c
+      if @c == ','
+        @c = Curses.getch
+        if @c == ','
+          @buffer.remove_previous
+          @mode = :view
+        else
+          insert
+        end
+      end
     end
   end
   def command
@@ -188,7 +213,7 @@ class Editor
     elsif @c == 127 #backspace
       @command = @command[0..@command.size - 2]
     else
-      @command += @c
+        @command += @c
     end
   end
   def view
