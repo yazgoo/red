@@ -213,7 +213,7 @@ class Editor
     elsif @c == 127 #backspace
       @command = @command[0..@command.size - 2]
     else
-        @command += @c
+        @command += @c if @c.is_a? String
     end
   end
   def view
@@ -271,4 +271,3 @@ class Editor
 end
 
 Editor.new(ARGV).run
-
