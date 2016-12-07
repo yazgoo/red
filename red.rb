@@ -1,5 +1,9 @@
 #!/usr/bin/env ruby
 require 'curses'
+require 'coderay'
+def setpos l, c
+  puts "\033[#{l};#{c}H"
+end
 class Historized
   attr_reader :actions, :dirty, :what
   def initialize what
@@ -49,19 +53,36 @@ class Buffer
     i = i % @contents.size
     [i, @contents[i]]
   end
+  def search search
+    (@cursor[0]...@contents.what.size).each do |i|
+      if @contents.what[i].include? search
+        @cursor[0] = i
+        setpos(i, @cursor[1])
+      end
+    end
+    ""
+  end
   def method_missing(m, *args, &block)  
     @contents.send m, *args
   end  
+  def language
+    if @path.end_with? ".go"
+      :go
+    else
+      :ruby
+    end
+  end
   def show 
     i = @cursor[0] - @dimension[0]/2 
     (@dimension[0] - 1).times.each do |dline|
-      Curses.setpos(dline, 0)
       c = contents i
       i += 1
       line = c[1]
       delta = @dimension[1] - line.size
       line = line + (delta > 0 ? (" " * delta) : "")
-      Curses.addstr(line)
+      setpos dline, 0
+      print CodeRay.scan(line, language).terminal
+      #Curses.addstr(line)
     end
   end
   def status
@@ -80,7 +101,7 @@ class Buffer
     @contents.paste_at pos
   end
   def show_cursor
-    Curses.setpos @dimension[0] / 2, @cursor[1]
+    setpos @dimension[0] / 2, @cursor[1]
   end
   def left 
     cursor[1] -= 1 if cursor[1] > 0
@@ -95,11 +116,11 @@ class Buffer
     @cursor[1] = 0
   end
   def word
-    index = @contents[@cursor[0]].index(/\W+/, @cursor[1] + 1)
+    index = @contents[@cursor[0]].index(/ \w+/, @cursor[1] + 1)
     @cursor[1] = index if index
   end
   def bword
-    index = @contents[@cursor[0]].reverse.index(/\W+/, @cursor[1] + 1)
+    index = @contents[@cursor[0]].reverse.index(/ \w+/, @contents[@cursor[0]].size - @cursor[1] + 1)
     @cursor[1] = @contents[@cursor[0]].size - index if index
   end
   def insert c
@@ -114,9 +135,14 @@ class Buffer
     @contents[@cursor[0]] = prefix + old[@cursor[1]..old.size-1]
     left
   end
+  def remove_next
+    old = @contents[@cursor[0]]
+    prefix = @cursor[1] >= 1 ? old[0..@cursor[1]-1] : ""
+    @contents[@cursor[0]] = prefix + old[@cursor[1]+1..old.size-1]
+  end
   def command c
     if c == "w"
-      File.write @path, @contents.join("\n")
+      File.write @path, @contents.join("\n") + "\n"
       "written"
     else
       spl = c.match  /%s,(.+),(.+),g/
@@ -159,9 +185,14 @@ class Editor
     @result = ""
     @i = 0
   end
+  def color fg, bg, str
+    "\e[1;3#{fg};4#{bg}m#{str}\e[0m"
+  end
   def status
-    Curses.setpos(@dimension[0] - 1, 0)
-    Curses.addstr(@buffers.each_with_index.map { |b, i| i == @i ? "[#{b.status}]" : b.status }.join("─") + "─" + @command + "─" + @result + "─" * @dimension[1])
+    setpos(@dimension[0] - 1, 0)
+    str = @buffers.each_with_index.map { |b, i| i == @i ? " #{b.status} " : b.status }.join("─") + " " 
+    str += @command + " " + @result + " " * @dimension[1]
+    printf color 6, 5, str[0...@dimension[1]]
   end
   def run_command c
     ntab = c.match  /tn (.+)/
@@ -206,8 +237,12 @@ class Editor
   end
   def command
     if @c == 10
-      @result = run_command @command
-      @result = @buffer.command @command if @result.nil?
+      if @mode == :command
+        @result = run_command @command
+        @result = @buffer.command @command if @result.nil?
+      else
+        @result = @buffer.search @command
+      end
       @mode = :view
       @command = ""
     elsif @c == 127 #backspace
@@ -232,6 +267,10 @@ class Editor
             @command = ""
           when 'g'
             @i = (@i + 1) % @buffers.size
+          when 'G'
+            @i = (@i - 1) % @buffers.size
+          when 'x'
+            @buffer.remove_next
           when 'd'
             case Curses.getch
             when 'd'
@@ -242,6 +281,8 @@ class Editor
           when 'o'
             @buffer.new_line
             @mode = :insert
+          when '/'
+            @mode = :search
           when '@c'
             @buffer.close
             @buffers.delete_at @i
@@ -250,7 +291,8 @@ class Editor
   end
   def run
     Curses.noecho # do not show typed keys
-    Curses.init_screen
+    #Curses.init_screen
+    #Curses.start_color
     Curses.stdscr.keypad(true) # enable arrow keys (required for pageup/down)
     @mode = :view
     loop do
@@ -262,6 +304,8 @@ class Editor
       if @mode == :insert
         insert
       elsif @mode == :command
+        command
+      elsif @mode == :search
         command
       else
         view
