@@ -192,7 +192,7 @@ class Editor
     @i = 0
   end
   def color fg, bg, str
-    "\e[1;3#{fg};4#{bg}m#{str}\e[0m"
+    "\e[1;3#{fg};4#{bg}m#{str.gsub('%', '%%')}\e[0m"
   end
   def mode_color
     {normal: 4, insert: 2, command: 1}[@mode] || 5
