@@ -165,6 +165,12 @@ class Buffer
   def down
     @cursor[0] += 1
   end
+  def last_line
+    @cursor[0] = @contents.size - 1
+  end
+  def first_line
+    @cursor[0] = 0
+  end
 end
 
 class Dimensions
@@ -188,11 +194,15 @@ class Editor
   def color fg, bg, str
     "\e[1;3#{fg};4#{bg}m#{str}\e[0m"
   end
+  def mode_color
+    {normal: 4, insert: 2, command: 1}[@mode] || 5
+  end
   def status
     setpos(@dimension[0] - 1, 0)
-    str = @buffers.each_with_index.map { |b, i| i == @i ? " #{b.status} " : b.status }.join("─") + " " 
+    str = @mode.to_s.upcase + " "
+    str += @buffers.each_with_index.map { |b, i| i == @i ? " #{b.status} " : b.status }.join("─") + " " 
     str += @command + " " + @result + " " * @dimension[1]
-    printf color 6, 5, str[0...@dimension[1]]
+    printf color 0, mode_color, str[0...@dimension[1]]
   end
   def run_command c
     ntab = c.match  /tn (.+)/
@@ -219,7 +229,7 @@ class Editor
     when 10 # enter
       @buffer.new_line
     when 27
-      @mode = :view
+      @mode = :normal
     when 127 #backspace
       @buffer.remove_previous
     else 
@@ -228,7 +238,7 @@ class Editor
         @c = Curses.getch
         if @c == ','
           @buffer.remove_previous
-          @mode = :view
+          @mode = :normal
         else
           insert
         end
@@ -243,7 +253,7 @@ class Editor
       else
         @result = @buffer.search @command
       end
-      @mode = :view
+      @mode = :normal
       @command = ""
     elsif @c == 127 #backspace
       @command = @command[0..@command.size - 2]
@@ -255,6 +265,8 @@ class Editor
         @result = ""
         buffer_actions = {
           Curses::Key::UP => :up, Curses::Key::DOWN => :down, Curses::Key::LEFT => :left, Curses::Key::RIGHT => :right,
+          'k' => :up, 'j' => :down, 'h' => :left, 'l' => :right,
+          'g' => :first_line, 'G' => :last_line,
           '@c' => :left, 'r' => :right, 's' => :up, 't' => :down, 'u' => :undo, '$' => :last, '^' => :first, 'w' => :word,
           'b' => :bword, 'p' => :paste
         }
@@ -281,6 +293,10 @@ class Editor
           when 'o'
             @buffer.new_line
             @mode = :insert
+          when 'O'
+            @buffer.up
+            @buffer.new_line
+            @mode = :insert
           when '/'
             @mode = :search
           when '@c'
@@ -294,7 +310,7 @@ class Editor
     #Curses.init_screen
     #Curses.start_color
     Curses.stdscr.keypad(true) # enable arrow keys (required for pageup/down)
-    @mode = :view
+    @mode = :normal
     loop do
       @buffer = @buffers[@i]
       @buffer.show
